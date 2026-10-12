@@ -1,31 +1,96 @@
+# ============================================================================
+# EXAMPLE docker-compose file (reference / documentation)
+#
+# This is a copy of docker-compose.yml with notes on what you can change
+# and what each change does. To use it, copy it over the real file:
+#
+#     cp docker-compose.example.yml docker-compose.yml
+#
+# nginx is NOT in here on purpose: you run nginx on the host and proxy it
+# to the app (see nginx/default.conf). Only the app and the database run
+# in Docker.
+# ============================================================================
+
 services:
   wordword:
+    # build: . -> builds the image from the local Dockerfile.
+    #   CHANGE: replace with `image: your-name/wordword:tag` to use a
+    #   prebuilt image instead of building locally.
     build: .
+
+    # container_name -> the fixed name shown in `docker ps`.
+    #   CHANGE: any name you like. Effect: cosmetic only.
     container_name: wordword
+
+    # restart -> restart policy.
+    #   "unless-stopped" keeps it running across reboots unless you stop it.
+    #   CHANGE: "no" (never auto-restart) or "always".
     restart: unless-stopped
+
+    # ports -> maps host port -> container port.
+    #   "127.0.0.1:3000:3000" means: only the host (localhost) can reach it,
+    #   on port 3000. Your host nginx proxies to 127.0.0.1:3000.
+    #   CHANGE the first 3000 to use a different host port, e.g.
+    #     "127.0.0.1:8080:3000" -> nginx must then proxy to 127.0.0.1:8080.
+    #   REMOVE the "127.0.0.1:" prefix to expose it on all interfaces
+    #     (less safe; the app would be reachable directly from the network).
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
+
     environment:
+      # DATABASE_URL -> when set, the app uses Postgres (production mode).
+      #   Format: postgres://USER:PASSWORD@HOST:PORT/DBNAME
+      #   HOST is "db" = the database service name below (Docker DNS).
+      #   CHANGE the USER/PASSWORD/DBNAME to match the db service settings.
+      #   REMOVE this line entirely -> the app falls back to the JSON file.
       - DATABASE_URL=postgres://wordword:wordword@db:5432/wordword
+
+      # These let SvelteKit trust the proxy headers nginx sends, so that
+      # form submissions / POST origin checks pass when behind the proxy.
+      #   CHANGE: usually leave as-is.
+      - PROTOCOL_HEADER=x-forwarded-proto
+      - HOST_HEADER=x-forwarded-host
+
+    # depends_on -> start order. Wait until the db is healthy before starting.
+    #   CHANGE: usually leave as-is.
     depends_on:
       db:
         condition: service_healthy
 
   db:
+    # image -> the Postgres version.
+    #   CHANGE: e.g. "postgres:16-alpine" to pin another version.
+    #   Effect: changing major version on existing data may need a migration.
     image: postgres:17-alpine
     container_name: wordword-db
     restart: unless-stopped
+
     environment:
+      # These three create the database on first run.
+      #   CHANGE the password (and keep DATABASE_URL above in sync!).
+      #   IMPORTANT: changing these AFTER the volume exists has no effect,
+      #   because the db is only initialized once. To reset, remove the
+      #   volume: `docker compose down -v` (this DELETES all words).
       - POSTGRES_USER=wordword
       - POSTGRES_PASSWORD=wordword
       - POSTGRES_DB=wordword
+
+    # volumes -> where Postgres stores its data on disk.
+    #   This named volume keeps your words safe across restarts/rebuilds.
+    #   CHANGE: replace "wordword-db" with "./pgdata" to store the files in
+    #   a visible folder next to the project instead of a Docker volume.
     volumes:
       - wordword-db:/var/lib/postgresql/data
+
+    # healthcheck -> lets the app wait until Postgres is ready to accept
+    # connections. CHANGE: usually leave as-is.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wordword -d wordword"]
       interval: 5s
       timeout: 5s
       retries: 5
 
+# Named volumes live here. Remove this if you switch db to a bind mount
+# (the "./pgdata" option noted above).
 volumes:
   wordword-db:
